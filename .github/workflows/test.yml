@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     # the CI token is a secret: pull requests from forks do not get it
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      security-events: write          # code scanning upload; alerts are readable by maintainers only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -22,7 +25,6 @@ jobs:
         with:
           token: ${{ secrets.INKDEX_TOKEN }}
           fail-on: high
-          upload-sarif: "false"
           cache: none
           args: --path vulnerable-app
         continue-on-error: true
