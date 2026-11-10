@@ -1,0 +1,35 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    # the CI token is a secret: pull requests from forks do not get it
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - id: inkdex
+        uses: ./
+        with:
+          token: ${{ secrets.INKDEX_TOKEN }}
+          fail-on: high
+          upload-sarif: "false"
+          cache: none
+          args: --path vulnerable-app
+        continue-on-error: true
+      - name: The vulnerable app is reported
+        env:
+          CODE: ${{ steps.inkdex.outputs.exit-code }}
+          SARIF: ${{ steps.inkdex.outputs.sarif }}
+        run: |
+          test "$CODE" = 1 || { echo "::error::expected exit code 1 (findings), got $CODE"; exit 1; }
+          jq -e '[.runs[].results[] | select(.locations[0].physicalLocation.artifactLocation.uri | endswith("app.py"))] | length > 0' "$SARIF"

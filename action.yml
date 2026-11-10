@@ -1,0 +1,134 @@
+name: inkdex
+description: Scan a repository with inkdex-vuln (injections, secrets, crypto, settings, dependencies) and upload SARIF to code scanning.
+author: mlab.sh
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  token:
+    description: The inkdex CI token (store it as the secret INKDEX_TOKEN).
+    required: true
+  fail-on:
+    description: Fail the job when a finding is at least this severe (critical, high, medium, low). Empty never fails on findings.
+    default: ""
+  since:
+    description: Report only the findings absent at this git revision (e.g. the pull request's base). Needs that commit in the checkout (fetch-depth 0).
+    default: ""
+  sarif:
+    description: Where to write the SARIF report.
+    default: inkdex.sarif
+  upload-sarif:
+    description: "Upload the report to GitHub code scanning (needs `security-events: write`)."
+    default: "true"
+  cache:
+    description: >-
+      Keep the index between runs. `actions` (GitHub's cache, the default), `none`, or an
+      `s3://bucket/key` URL (AWS, R2, MinIO: the AWS_* variables in the job's env), pulled on
+      every run and pushed only from pushes to the default branch.
+    default: actions
+  args:
+    description: More arguments for `inkdex-vuln scan` (e.g. `--path src/** --explain`).
+    default: ""
+
+outputs:
+  sarif:
+    description: The SARIF report's path.
+    value: ${{ inputs.sarif }}
+  exit-code:
+    description: inkdex-vuln's exit code (0 nothing at the threshold, 1 findings at it, 2 inkdex could not run).
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install inkdex
+      shell: bash
+      run: |
+        if command -v inkdex-vuln >/dev/null; then exit 0; fi
+        if ! command -v apt-get >/dev/null; then
+          echo "::error::inkdex-action installs from apt.mlab.sh: use a Debian / Ubuntu runner, or install inkdex before this step"
+          exit 2
+        fi
+        sudo install -m 0755 -d /etc/apt/keyrings
+        sudo curl -fsSL https://apt.mlab.sh/mlab.asc -o /etc/apt/keyrings/mlab.asc
+        printf 'Types: deb\nURIs: https://apt.mlab.sh\nSuites: stable\nComponents: main\nSigned-By: /etc/apt/keyrings/mlab.asc\n' \
+          | sudo tee /etc/apt/sources.list.d/mlab.sources >/dev/null
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq inkdex inkdex-vuln
+
+    - name: Version for the cache key
+      shell: bash
+      run: echo "INKDEX_VERSION=$(inkdex --version | cut -d' ' -f2)" >> "$GITHUB_ENV"
+
+    - name: Restore the index (GitHub cache)
+      if: inputs.cache == 'actions'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .inkdex
+        key: inkdex-${{ env.INKDEX_VERSION }}-${{ github.ref_name }}-${{ github.sha }}
+        restore-keys: |
+          inkdex-${{ env.INKDEX_VERSION }}-${{ github.ref_name }}-
+          inkdex-${{ env.INKDEX_VERSION }}-${{ github.event.repository.default_branch }}-
+
+    - name: Restore the index (S3)
+      if: startsWith(inputs.cache, 's3://')
+      shell: bash
+      env:
+        INKDEX_TOKEN: ${{ inputs.token }}
+        CACHE_URL: ${{ inputs.cache }}
+      run: |
+        if [ -d .inkdex ]; then exit 0; fi
+        inkdex pull "$CACHE_URL" || echo "::notice::no index at $CACHE_URL yet: built from scratch"
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        INKDEX_TOKEN: ${{ inputs.token }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        SINCE: ${{ inputs.since }}
+        SARIF: ${{ inputs.sarif }}
+        ARGS: ${{ inputs.args }}
+      run: |
+        cmd=(inkdex-vuln scan . --update --format sarif -o "$SARIF")
+        if [ -n "$FAIL_ON" ]; then cmd+=(--fail-on "$FAIL_ON"); fi
+        if [ -n "$SINCE" ]; then cmd+=(--since "$SINCE"); fi
+        # shellcheck disable=SC2206 # extra arguments are words, as on a command line
+        if [ -n "$ARGS" ]; then cmd+=($ARGS); fi
+        set +e
+        "${cmd[@]}"
+        code=$?
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+
+    - name: Upload to code scanning
+      if: inputs.upload-sarif == 'true' && hashFiles(inputs.sarif) != ''
+      uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+      with:
+        sarif_file: ${{ inputs.sarif }}
+        category: inkdex
+
+    - name: Save the index (GitHub cache)
+      if: inputs.cache == 'actions' && steps.scan.outputs.exit-code != '2'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .inkdex
+        key: inkdex-${{ env.INKDEX_VERSION }}-${{ github.ref_name }}-${{ github.sha }}
+
+    - name: Save the index (S3)
+      # only the default branch's own pushes write it: a pull request (a fork's above all) never does
+      if: >-
+        startsWith(inputs.cache, 's3://') && steps.scan.outputs.exit-code != '2' &&
+        github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+      shell: bash
+      env:
+        INKDEX_TOKEN: ${{ inputs.token }}
+        CACHE_URL: ${{ inputs.cache }}
+      run: inkdex gc --keep 20 && inkdex push "$CACHE_URL"
+
+    - name: Result
+      shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.exit-code }}
+      run: exit "$CODE"
