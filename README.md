@@ -34,7 +34,8 @@ Public repositories included:
 - **Not in the logs.** The scan writes its report to a file (`sarif`); the job's log, public on
   a public repository, only says how many findings there are.
 - **Code scanning alerts** (Security › Code scanning) are readable by the repository's
-  maintainers (write access), not by visitors.
+  maintainers (write access), not by visitors. Only high and critical findings go there by
+  default (`upload-severity`): medium and low ones stay in the report file.
 - **Not as an artifact.** The action uploads none: on a public repository anyone signed in to
   GitHub can download a run's artifacts. Do not add an `upload-artifact` of the report there.
 - **Pull requests.** Code scanning annotates the lines a pull request changes, and anyone who can
@@ -52,6 +53,7 @@ Public repositories included:
 | `since` | none | Only the findings absent at this revision (needs `fetch-depth: 0`). |
 | `sarif` | `inkdex.sarif` | Where the report is written. |
 | `upload-sarif` | `true` | Upload it to code scanning. |
+| `upload-severity` | `high` | The least severe findings code scanning gets (`critical`, `high`, `medium`, `low`); the report file keeps all. |
 | `cache` | `actions` | Keep the index between runs: `actions` (GitHub's cache), `none`, or `s3://bucket/key`. |
 | `args` | none | More arguments for `inkdex-vuln scan` (`--path src/**`, `--explain`…). |
 

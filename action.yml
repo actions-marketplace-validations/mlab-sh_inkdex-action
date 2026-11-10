@@ -21,6 +21,11 @@ inputs:
   upload-sarif:
     description: "Upload the report to GitHub code scanning (needs `security-events: write`)."
     default: "true"
+  upload-severity:
+    description: >-
+      The least severe findings sent to code scanning (critical, high, medium, low). Below it they
+      stay in the report file only, so code scanning holds what needs a fix, not every lead.
+    default: high
   cache:
     description: >-
       Keep the index between runs. `actions` (GitHub's cache, the default), `none`, or an
@@ -102,11 +107,33 @@ runs:
         set -e
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
 
-    - name: Upload to code scanning
+    - name: Keep what code scanning gets
+      id: upload
       if: inputs.upload-sarif == 'true' && hashFiles(inputs.sarif) != ''
+      shell: bash
+      env:
+        SARIF: ${{ inputs.sarif }}
+        MIN: ${{ inputs.upload-severity }}
+      run: |
+        case "$MIN" in
+          critical) rank=4 ;; high) rank=3 ;; medium) rank=2 ;; low) rank=1 ;;
+          *) echo "::error::upload-severity must be critical, high, medium or low (got '$MIN')"; exit 2 ;;
+        esac
+        if ! command -v jq >/dev/null; then sudo apt-get install -y -qq jq; fi
+        out="$RUNNER_TEMP/inkdex-code-scanning.sarif"
+        # results without a known severity are kept: better one alert too many than a silent one
+        jq --argjson min "$rank" '
+          def rank: {"critical":4,"high":3,"medium":2,"low":1}[.] // 4;
+          .runs |= map(.results |= map(select((.properties.severity // "critical") | rank >= $min)))
+        ' "$SARIF" > "$out"
+        echo "sarif=$out" >> "$GITHUB_OUTPUT"
+        echo "$(jq '[.runs[].results[]] | length' "$out") of $(jq '[.runs[].results[]] | length' "$SARIF") findings sent to code scanning (at least $MIN)"
+
+    - name: Upload to code scanning
+      if: steps.upload.outputs.sarif != ''
       uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
       with:
-        sarif_file: ${{ inputs.sarif }}
+        sarif_file: ${{ steps.upload.outputs.sarif }}
         category: inkdex
 
     - name: Save the index (GitHub cache)
