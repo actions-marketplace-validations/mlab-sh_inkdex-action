@@ -1,4 +1,4 @@
-name: inkdex
+name: inkdex security scan
 description: Scan a repository with inkdex-vuln (injections, secrets, crypto, settings, dependencies) and upload SARIF to code scanning.
 author: mlab.sh
 branding:
