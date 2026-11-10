@@ -27,6 +27,22 @@ jobs:
 The action installs inkdex from apt.mlab.sh, so it runs on Ubuntu / Debian runners; on others,
 install inkdex before it.
 
+## Who sees the findings
+
+Public repositories included:
+
+- **Not in the logs.** The scan writes its report to a file (`sarif`); the job's log, public on
+  a public repository, only says how many findings there are.
+- **Code scanning alerts** (Security › Code scanning) are readable by the repository's
+  maintainers (write access), not by visitors.
+- **Not as an artifact.** The action uploads none: on a public repository anyone signed in to
+  GitHub can download a run's artifacts. Do not add an `upload-artifact` of the report there.
+- **Pull requests.** Code scanning annotates the lines a pull request changes, and anyone who can
+  read the pull request sees those annotations. On a public repository, run with
+  `upload-sarif: "false"` on `pull_request` if new findings must not show there before a fix.
+- **Forks.** A pull request from a fork gets neither your secrets nor `security-events: write`:
+  run the job on pushes and on your own branches' pull requests.
+
 ## Inputs
 
 | Input | Default | |
