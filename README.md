@@ -95,4 +95,7 @@ variables (AWS S3, Cloudflare R2, MinIO…):
 ## Versions
 
 `v1` follows the latest `v1.x.y`. Pin a full commit SHA if your policy asks for it.
+
+Releasing (maintainers): push a `vX.Y.Z` tag; the `release` workflow moves `vX` onto it and
+creates the GitHub release.
 Documentation: https://inkdex.mlab.sh
